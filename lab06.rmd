@@ -1,0 +1,288 @@
+---
+title: "lab06"
+author: '480139690'
+date: "30/03/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+- Provide a clear statement of the question you intend to address or the topic that you intend to focus on your multi-media discipline report. 
+
+- What is your approach to addressing the question stated in (1) and what is the key technique in your approach (e.g. random forest, lasso, Bayesian network etc.)? Select ONE method and provide a concise technical description.
+
+- Identify potential shortcomings or issues associated with the data analytics that you have performed and discuss a possible approach to address the issue. Here, a strategy doesn't necessarily refer to a model, but it must address the issue.
+
+- Create and describe the interactive graphics (or shiny app) that illustrate one aspect of your report, and please provide the link to the shiny app (this can either be a web page or a GitHub link). 
+
+```{r}
+library(GEOquery)  ## go to https://github.com/seandavi/GEOquery for installation details
+library(R.utils)
+library(reshape2)
+library(ggplot2)
+library(limma) ## to look at linear model in matrix annotation
+library(dplyr)
+library(ggbiplot)
+library(factoextra)
+#-------- unknown useful
+library(Biobase)
+```
+
+GSE 是一个基因测试组，其中每列是一个patients，每行是一个基因。我们可以通过given url得到每个patients的transplant状况。
+
+The **affy package** provides the functions to process data using RMS from.CEL to an **expression matrix**.
+
+## Microarray data
+
+use the probe with the highest normalized intensity averaged over all samples
+
+select the probe with the lowest p-value
+
+```{r}
+clinical_outcome <-getGEO("GSE131179")
+clinical_outcome<- clinical_outcome$GSE131179_series_matrix.txt.gz
+
+# 查看表达集维度 给出样本数与特征值，也就是测定序列数
+dim(clinical_outcome)
+# Features  Samples 
+#        0       88 
+# experimentData(clinical_outcome)
+
+print(clinical_outcome$characteristics_ch1.1[1:10])
+
+rejection_status  <- clinical_outcome$characteristics_ch1.1
+rejection_status <- unlist(lapply(strsplit(as.character(rejection_status), ": " ) , `[[` , 2))
+table(rejection_status)
+```
+
+We did RNA sequencing of 34 kidney allograft biopsy specimens from 34 adult recipients; 17 were categorized as Banff acute T-cell mediated rejection (TCMR) and 18 as normal.
+
+```{r}
+# Note: please change this dir to point to the folder where your dataset is
+datadir = "GSE131179_RAW"
+
+# Read in the files
+fileNames <- list.files(datadir)
+
+# Check that we have read in the correct files
+print(fileNames[1:5])
+
+## Each of these files has the gene expression count for adult recipients. 
+```
+
+```{r}
+# Read in all 34 files to make a table
+gse = c()
+for(i in 1:length(fileNames)){
+  temptable <- read.delim(file.path(datadir, fileNames[i]), header=TRUE)
+  gse <- cbind(gse, temptable[,2])
+  colnames(gse)[i] <- colnames(temptable)[2]
+}
+
+# each column represent a recipients
+rownames(gse) = read.delim(file.path(datadir, fileNames[1]), header=TRUE)[,1]
+```
+
+gse colname 的顺序与tar file 一致
+
+# Q2. What is the size of this data matrix
+
+```{r}
+dim(gse)
+### means there is 34 patients
+```
+
+# Discussion: we also noticed something weird going on with the gene symbol column, it does not look like gene symbol. Do you know why?
+
+```{r}
+summary(gse[,1])
+summary(log2(gse[,1]))
+gse = log2(gse)+1
+write.csv(gse, "GSE131179_expression_matrix.csv")
+# clearly, it has not been log transform
+```
+
+```{r}
+p <- ggplot(melt(gse), aes(x=Var1, y=value)) +  
+  geom_boxplot(outlier.colour="black", outlier.shape=16,
+             outlier.size=0.5, notch=FALSE) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs (x = "Recipients", y = "expression value") + theme_minimal()
+p
+```
+
+## Q1. What is highly differentially expressed genes between stable and rejection patients? 
+
+## Q2:Discussion: the impact of multiple testing. Convineced yourself via simulation.
+
+```{r}
+groupname <- c(unlist(rep('ACR',16)),unlist(rep('Normal',18)))
+design <- model.matrix(~ groupname + 0)  ## design matrix
+
+fit <- lmFit(gse, design) ### 我们使用调和F检验(moderated F test)来计算这些基因，它的零假设是，在所有的组织中，基因的表达是恒定的
+cont.matrix <- makeContrasts(groupnameACR-groupnameNormal, levels=design)  ## pairwise comparison
+fit2 <- contrasts.fit(fit, cont.matrix)
+fit2 <- eBayes(fit2) ## 不懂  
+tT <- topTable(fit2) ## significant gene
+round(tT[1:5,], 2)
+sig50 <- rownames(fit2$coefficients[order(fit2$F,decreasing=TRUE)[1:50],-1])
+heatmap(gse[sig50,])
+# 这里发生的是一个常见的limma工作流程。首先，通过所谓的“设计矩阵”来定义兴趣的比较（和实验的设计）。该矩阵基本上涵盖了我们对设计知识的一切;在这种情况下，有两个组（我们在下面的设计中有更多的说明）。接下来，该模型是适合的。其次是使用所谓的经验贝叶斯程序（这是真正有益于奇迹的limma中的一步），在基因之间借用力量。因为这个设计只有两个组，所以只有一个可能的比较：两组之间哪些基因不同。这个问题由'topTable（）'函数检查，它列出了最差异表达基因。在一个比较复杂的设计中，`topTable（）'函数需要被告知哪些比较的兴趣来进行总结。
+```
+
+
+```{r}
+library(MLInterfaces)
+library(randomForest)
+set.seed(1234)
+rf1 = MLearn(Tissue~., gse[sig50,], randomForestI, xvalSpec("NOTEST"))
+RObject(rf1)
+```
+
+
+create random white noise, you will find p-value that is significant, when you test enough by random chances, yu will find significant 
+
+```{r}
+cl <- factor(sample(c("ACR", "NORMAL"), 34, replace=TRUE))
+fakeX <- matrix(rnorm(10000*34), nrow=10000)
+
+design <- model.matrix(~ cl + 0 )
+fakefit <- lmFit(fakeX, design)
+cont.matrix <- makeContrasts(clACR - clNORMAL, levels=design)
+
+fakefit2 <- contrasts.fit(fakefit, cont.matrix)
+fakefit2 <- eBayes(fakefit2)
+round(topTable(fakefit2), 2)
+
+qqnorm(fakefit2)
+abline(0,1)
+```
+
+
+<!-- gse problem -->
+<!-- Try saving the file as a ".csv" file instead of a ".txt" file. -->
+
+<!-- If that doesn't work, try making sure that the write.csv and read.csv are referring to same file path. -->
+
+# 探索分析作图
+Lab 06 没有讲MA plot作用
+
+## Q3
+MA plot 
+x轴为两组基因组的均值，y轴为两组基因组的均值差
+用来表示两组平行间的差异
+MAplot观察数值分布，一般为均值小差异大，均值大相对稳定
+```{r}
+df<- topTable(fit2, number=nrow(fit2), genelist=rownames(gse))
+
+p <- ggplot(df, aes(x = AveExpr, y = logFC))+
+    geom_point(aes(colour=-log10(P.Value)), alpha=1/3, size=1) +
+    scale_colour_gradient(low="blue",high="red")+
+    ylab("log2 fold change") + xlab("Average expression")
+p
+
+```
+
+
+横坐标为处理间基因表达差异，纵坐标为差异的-log10(p.value)
+一般为火山喷发状，差异越大，p值越小
+rowttests(y[, smallset], group[smallset]) 定义分组，设定模型可进行t-test，用火山图来表示
+通常横坐标用log2（fold change）表示，差异越大的基因分布在两端，
+纵坐标用-log10（pvalue）表示，T检验显著性P值的负对数。
+可知纵轴越往上走P值越小，而P值越小表示越显著。
+
+
+```{r}
+p <- ggplot(df, aes(logFC,-log10(P.Value)))+
+    geom_point(aes(colour=-log10(P.Value)), alpha=1/3, size=1) +
+    scale_colour_gradient(low="blue",high="red")+
+    xlab("log2 fold change") + ylab("-log10 p-value")
+p
+```
+
+Q4. Principal Component Analysis (PCA) It would be nice if we can visualise our data with a 2D scatterplot. 
+
+```{r}
+gse_pca <- prcomp(t(gse))
+summary(gse_pca)
+df_toplot <- data.frame(rejection_status, 
+                        pc1 = gse_pca$x[,1], pc2 = gse_pca$x[,2]  )
+
+p1 = ggbiplot::ggscreeplot(gse_pca) + theme_bw(base_size = 16) + 
+    labs(y = "Prop. of explained variance")
+p2 = ggbiplot::ggscreeplot(gse_pca, type = "cev") + theme_bw(base_size = 16) + 
+    labs(y = " Cumulative prop. of explained variance")
+gridExtra::grid.arrange(p1, p2, ncol = 2)
+
+km = kmeans(t(gse), centers = 2, nstart = 10)
+fviz_cluster(km, data = t(gse), geom = "point") + theme_classic()
+
+ggbiplot::ggbiplot(gse_pca, labels.size = 5, varname.size = 8, alpha = 0.25, groups = rejection_status) + theme_bw() + labs(title = "k-means clustering") + scale_color_brewer(palette = "Set1")
+
+
+g <- ggplot(df_toplot, aes(x = pc1, y = pc2, color = rejection_status)) + 
+  geom_point() + 
+  theme_minimal() 
+g
+```
+
+### use saved expression matricx as input, use lab02 code to perform ML. 
+```{r}
+## quick filter to reduce computational time
+
+largevar = apply(gse, 1, var)
+ind = which(largevar > quantile(largevar, 0.9))
+
+X = as.matrix(t(gse[ind,]))
+y = rejection_status
+
+cvK = 5  # number of CV folds
+cv_50acc5_knn = cv_50acc5_svm = cv_50acc5_rf = c()
+cv_acc_knn = cv_acc_svm = cv_acc_rf = c()
+
+n_sim = 25 ## number of repeats
+for (i in 1:n_sim) {
+
+  cvSets = cvTools::cvFolds(nrow(X), cvK)  # permute all the data, into 5 folds
+  cv_acc_knn = cv_acc_svm = cv_acc_rf = c()
+  
+  for (j in 1:cvK) {
+    test_id = cvSets$subsets[cvSets$which == j]
+    X_test = X[test_id, ]
+    X_train = X[-test_id, ]
+    y_test = y[test_id]
+    y_train = y[-test_id]
+    
+    ## KNN
+    fit5 = class::knn(train = X_train, test = X_test, cl = y_train, k = 5)
+    cv_acc_knn[j] = table(fit5, y_test) %>% diag %>% sum %>% `/`(length(y_test))
+    
+    ## SVM
+    svm_res <- e1071::svm(x = X_train, y = as.factor(y_train))
+    fit <- predict(svm_res, X_test)
+    cv_acc_svm[j] = table(fit, y_test) %>% diag %>% sum %>% `/`(length(y_test))
+
+    ## RandomForest
+    rf_res <- randomForest::randomForest(x = X_train, y = as.factor(y_train))
+    fit <- predict(rf_res, X_test)
+    cv_acc_rf[j] = table(fit, y_test) %>% diag %>% sum %>% `/`(length(y_test))
+  }
+  cv_50acc5_knn <- append(cv_50acc5_knn, mean(cv_acc_knn))
+  cv_50acc5_svm <- append(cv_50acc5_svm, mean(cv_acc_svm))
+  cv_50acc5_rf <- append(cv_50acc5_rf, mean(cv_acc_rf))
+} ## end for
+```
+
+
+
+# Shinny
+
+## What function shoult Shinny look like 
+参考：
+https://www.ncbi.nlm.nih.gov/geo/info/geo2r.html
+```{r}
+
+```
+

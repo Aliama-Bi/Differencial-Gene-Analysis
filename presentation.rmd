@@ -1,0 +1,60 @@
+---
+title: "Differential Gene Expression Analysis"
+subtitle: "Investigate highly differentially expressed genes between Banff acute T-cell mediated rejection (TCMR) and normal kidney allograft biopsy specimens"
+author: "SID: 480139690"
+output:
+  xaringan::moon_reader:
+    lib_dir: libs
+    nature:
+      highlightStyle: github
+      highlightLines: true
+      countIncrementalSlides: false
+      ratio: 16:9
+    css: [default, "metropolis_white.css", fc-fonts]
+---
+
+```{r Package import, message = FALSE, echo = FALSE}
+library(GEOquery)  
+library(R.utils)
+library(reshape2)
+library(ggplot2)
+library(limma) 
+library(dplyr)
+library(ggbiplot)
+library(factoextra)
+library(tidyverse)
+```
+
+```{r Dataset import, message = FALSE, echo = FALSE,warning=FALSE}
+clinical_outcome <-getGEO("GSE131179")
+clinical_outcome<- clinical_outcome$GSE131179_series_matrix.txt.gz
+
+rejection_status  <- clinical_outcome$characteristics_ch1.1
+rejection_status <- unlist(lapply(strsplit(as.character(rejection_status), ": " ) , `[[` , 2))
+
+datadir = "GSE131179_RAW"
+fileNames <- list.files(datadir)
+
+gse = c()
+for(i in 1:length(fileNames)){
+  temptable <- read.delim(file.path(datadir, fileNames[i]), header=TRUE)
+  gse <- cbind(gse, temptable[,2])
+  colnames(gse)[i] <- colnames(temptable)[2]
+}
+
+rownames(gse) = read.delim(file.path(datadir, fileNames[1]), header=TRUE)[,1]
+```
+
+class: inverse, center, middle
+
+# Analyse Pipeline Overview
+
+---
+
+
+
+# The GSE131179 Dataset
+
+---
+
+

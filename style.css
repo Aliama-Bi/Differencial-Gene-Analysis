@@ -1,0 +1,31 @@
+body {
+  font-size: 13pt;
+  text-align: justify;
+}
+
+code.r {
+  font-size: 14px;
+}
+
+pre {
+  font-size: 14px;
+}
+
+.title {
+  color: #1f8ac0;
+}
+
+h2 {
+  color: #1f8ac0;
+}
+
+h3 {
+  color: #104c91;
+  font-weight: bold;
+}
+
+h5 {
+  color: #104c91;
+}
+
+
