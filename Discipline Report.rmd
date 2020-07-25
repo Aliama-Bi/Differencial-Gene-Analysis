@@ -1,0 +1,350 @@
+---
+title: "**Discipline Report**"
+author:
+- "**SID:** 480139690"
+output:
+  html_document:
+    theme: paper
+    toc: true
+    toc_float: true
+    code_folding: hide
+    css: style.css
+    link_citations: true
+---
+
+```{r global_options, include=FALSE}
+knitr::opts_chunk$set(fig.width=8, fig.height=5, fig.path='Figs/',echo=TRUE, tidy=TRUE, warning=FALSE, message=FALSE)
+```
+
+*'Predicting the presence of T-cell mediated rejection (TCMR) based on recipients' gene characteristics'*
+
+```{r eval=FALSE, include=FALSE}
+# # ----------------- tasks to finish -------------- #
+# 
+# - Provide a clear statement of the question you intend to address or the topic that you intend to focus on your multi-media discipline report. 
+# 
+# - What is your approach to addressing the question stated in (1) and what is the key technique in your approach (e.g. random forest, lasso, Bayesian network etc.)? Select ONE method and provide a concise technical description.
+# 
+# - Identify potential shortcomings or issues associated with the data analytics that you have performed and discuss a possible approach to address the issue. Here, a strategy doesn't necessarily refer to a model, but it must address the issue.
+# 
+# - Create and describe the interactive graphics (or shiny app) that illustrate one aspect of your report, and please provide the link to the shiny app (this can either be a web page or a GitHub link). 
+
+
+# In this study, we want to figure out **what is highly differentially expressed genes between Banff acute T-cell mediated rejection (TCMR) and normal kidney allograft biopsy specimens**. Once we identified heightened expression of differential genes between TCMR and normal groups, we can predict the kidney transplant rejection based on recipients’ gene characteristics. 
+
+# (shrinks standard errors that are much larger or smaller than those from other genes towards the average standard error)
+```
+
+
+
+```{r Package import, message=FALSE, warning=FALSE, include=FALSE}
+library(GEOquery)  ## go to https://github.com/seandavi/GEOquery for installation details
+library(R.utils)
+library(reshape2)
+library(ggplot2)
+library(limma) ## to look at linear model in matrix annotation
+library(dplyr)
+library(ggbiplot)
+library(factoextra)
+library(tidyverse)
+library(edgeR)
+library(ggrepel)
+```
+
+# **Executive Summary**
+
+## **Aim and Background**
+
+Antibody mediated rejection remains an important barrier to optimal long-term outcomes after kidney transplantation(Vasishta S 2018). In this study, we want to figure out **How to predict presence of T-cell mediated rejection (TCMR) based on recipients’ gene characteristics?**
+
+We will first apply differential gene analysis between these two groups using Fitted Linear Model with empirical Bayes method. After that, a SVM classifer has been used to predict rejection based on recipients’ gene. 
+
+## **Data loading and Pre-processing**
+
+The RNA-seq expression values file **GSE131179_RAW** was accessed from Gene Expression Omnibus database (https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE131179), obtained from kidney allograft recipients transplanted. We found data has been normalised using Fragments Per Kilobase of transcript per Million (FPKM).
+
+This dataset contains 34 adult kidney transplant recipients with 60466 genes recorded for each recipient, 16 recipients were categorized as Banff acute T-cell mediated rejection (TCMR) and 18 as normal. 
+
+```{r Dataset import, echo=FALSE, message=FALSE}
+# Note: please change this dir to point to the folder where your dataset is
+datadir = "GSE131179_RAW"
+# Read in the files
+fileNames <- list.files(datadir)
+
+# Read in all 34 files to make a table
+gse_raw = c()
+for(i in 1:length(fileNames)){
+  temptable <- read.delim(file.path(datadir, fileNames[i]), header=TRUE)
+  gse_raw <- cbind(gse_raw, temptable[,2])
+  colnames(gse_raw)[i] <- colnames(temptable)[2]
+}
+
+# each column represent a recipients
+rownames(gse_raw) = read.delim(file.path(datadir, fileNames[1]), header=TRUE)[,1]
+# dim(gse_raw)
+clinical_outcome <-getGEO("GSE131179")
+clinical_outcome<- clinical_outcome$GSE131179_series_matrix.txt.gz
+
+# dim(clinical_outcome)
+# experimentData(clinical_outcome)
+
+rejection_status  <- clinical_outcome$characteristics_ch1.1
+rejection_status <- unlist(lapply(strsplit(as.character(rejection_status), ": " ) , `[[` , 2))
+# table(rejection_status) %>% knitr::kable()
+```
+
+ 
+## **Data Pre-processing**
+
+A quality assessment has been performed on expression data. We are looking for samples whose gene expression value collection suffered from an abnormality that renders the data points obtained from these particular samples detrimental to our purpose.
+
+### **Normalised Gene Expression Matrix**
+
+We found expression value has not been applied log2 transform. To minimise variance difference among different samples, we normalised data using $log_2$ transformation, with 1 plus in case original expression value is 0.  
+
+```{r log2, echo=FALSE}
+# summary(gse_raw[,1])
+gse = log2(gse_raw+1)
+# summary(gse[,1])
+# NormFactors = calcNormFactors(gse, method = "upperquartile")
+# gse_norm = gse
+# for(i in 1:ncol(gse)){
+#     gse_norm[,i] = gse[,i]*NormFactors[i]
+# }
+```
+
+```{r boxplot, echo=FALSE}
+par(mfrow=c(1,2))
+p_box_raw <- ggplot(melt(gse_raw),aes(x=Var2, y=value)) +  
+  geom_boxplot(outlier.colour="black", outlier.shape=16,
+             outlier.size=0.5, notch=FALSE) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs (x = "Recipients", y = "raw expression value", title = "Raw Data") + theme_minimal()+
+  ylim(min(melt(gse_raw)$value, 0)*1.2, max(melt(gse_raw)$value)*1.2)
+
+p_box <- ggplot(melt(gse), aes(x=Var2, y=value)) +  
+  geom_boxplot(outlier.colour="black", outlier.shape=16,
+             outlier.size=0.5, notch=FALSE) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs (x = "Recipients", y = "log2(expression value+1)", title = "Log2 Transformed Data") + theme_minimal()
+gridExtra::grid.arrange(p_box_raw, p_box, ncol = 2)
+```
+
+After normalising, we find there is not any boxplot that looks very different from the rest, but a few samples appears slightly not identicle distribution. We consider it as $\color{RED}{\text{Potential Shortcoming 1}}$
+
+## **Differential gene expression analysis**
+
+### **Key Approach: Contrast comparison with Fitted Linear Model**
+
+To identify differential genes, we perform **Contrast Comparison** to each gene between **TCMR** group and **Normal** group. In that case, we use fitted linear model to estimate the variability in the data. We mainly use package 'limma' (Ritchie 2015) to implement this approach. 
+
+A hypothesis test was performed on $\beta_g$, the coefficient of each gene, where $g\in\{0,1,\cdots,60466\}$. Each test has the following form:
+
+1. **Hypotheses:**
+  - $H_0$: There are identical gene expression values for same gene between two groups. That is, $Y_{kg} = \mu + \epsilon_{kg}, g = 1,...,60466, k = 1,2$
+  - $H_1$: There is at least one differencial gene between two groups. That is, $Y_{kg} = \mu + \alpha_k + \epsilon_{kg}, g = 1,...,60466, k = 1,2$
+  
+2. **Test statistic:**
+
+We use **moderated t-statistic** to perform significance analysis given by:
+
+$$\tilde{t_{gk}}=\frac{\hat{\beta_{gk}}}{u_{gk}\tilde{s_g}}$$
+
+Under $H_0$, we have that $T\sim t_{n-2}$ where 2 is rank, because we have two groups to compare.
+
+The linear model for gene g has residual variance ${\sigma_g}^2$ with sample value ${s_g}^2$ and degrees of freedom $d_g$.
+
+```{r include=FALSE}
+groupname <- c(unlist(rep('ACR',16)),unlist(rep('Normal',18)))
+design <- model.matrix(~ groupname + 0) 
+contrast.matrix <- makeContrasts(groupnameACR-groupnameNormal, levels=design) 
+fit <- lmFit(gse, design)
+fit2 <- contrasts.fit(fit, contrast.matrix)
+```
+
+3. **Procedure Outline:**
+
+- Create **design matrix** includes the independent coefficient for each sample in two groups, say **$X$**; 
+
+- Create **contrast matrix** create contrasts of these fitted linear models to make all contrast comparisons between the two groups, say $C$. 
+
+- Using **lmFit** fits a linear model using for each gene. This linear model is fitted to the expression data for each probe.
+
+- After using **contrast.fit** to estimate contrast for each gene. Our questions becomes 'find the top significant sample contrast'. The covariance matrix of the estimated $\beta_g$ is ${\sigma_g}^2C^T(X^TX)^{-1}C$ and the $s_g$ is the square-roots of diagonal elements of $C^T(X^TX)^{-1}C$. 
+
+```{r eBayes, warning=FALSE, include=FALSE}
+fit2 <- eBayes(fit2)  
+```
+
+- The **eBayes()** uses an empirical Bayes method to moderate the standard errors of the estimated log-fold changes. This results generates more stable inference and improved power, decrease Type II error(Smyth 2004).The posterior values for the residual variances are given by:
+$$\tilde{s_{g}}^2=\frac{d_0s_0^2}{d_0+d_g}$$
+
+Where $d_g$ is the residual degrees of freedom for the gth gene. 
+
+- Using coefficient $\beta_g$ and unscaled standard deviations $s_g$, we can calculate **p-value** and order genes by significance. A list of top genes differential expressed in **TCMR** group versus **Normal** group can be obtained from topTable, which use moderated t-statistic to perform significance analysis. 
+
+- The following five genes to be a potential signature for gene differentiation: 
+
+```{r topTable, include=FALSE}
+tT <- topTable(fit2) 
+df<- topTable(fit2, number=nrow(fit2), genelist=rownames(gse))
+```
+
+## **Visualise Differentially Expressed Gene**
+
+```{r vocano plot, echo=FALSE}
+cut_off_pvalue = 0.005
+cut_off_logFC = 1
+
+dataset = df
+dataset$change = ifelse(dataset$P.Value < cut_off_pvalue & abs(dataset$logFC) >= cut_off_logFC, 
+                     ifelse(dataset$logFC > cut_off_logFC ,'Upregulated','Downregulated'),
+                     'Not Significant')
+p<-ggplot(
+  dataset, 
+  aes(x = logFC, 
+      y = -log10(P.Value), 
+      colour=change)) +
+      geom_point(alpha=0.4, size=3.5) +
+      scale_color_manual(values=c("#546de5", "#d2dae2","#ff4757"))+
+
+  # abline
+  geom_vline(xintercept=c(-1,1),lty=4,col="black",lwd=0.8) +
+  geom_hline(yintercept = -log10(cut_off_pvalue),lty=4,col="black",lwd=0.8) +
+
+  # axis
+  labs(x="log2(fold change)",
+       y="-log10 (p-value)")+
+  theme_bw()+
+
+  # theme
+  theme(plot.title = element_text(hjust = 0.5), 
+        legend.position="right", 
+        legend.title = element_blank()
+)
+
+dataset$label = ifelse(dataset$P.Value < cut_off_pvalue & abs(dataset$logFC) >= 4.4, dataset$ID,"")
+p_vocano <- p+geom_text_repel(data = dataset, aes(x = logFC, 
+                                      y = -log10(P.Value), 
+                                      label = label),
+                  size = 3,box.padding = unit(0.5, "lines"),
+                  point.padding = unit(0.8, "lines"), 
+                  segment.color = "black", 
+                  show.legend = FALSE) + 
+                  labs(title = 'Vocano Plot')
+p_vocano
+```
+
+We can get a basic overview of gene expression difference using **Vocano plot**. Here we can see there are much more upregulated genes than downregulated genes, which means the final gene expression value between **two groups are not in the same order of magnitude**. That might cause biased result in later analysis, we consider it as $\color{RED}{\text{Potential Shortcoming 2}}$. 
+
+## **Using Shiny APP to Select Minimum Number of Important Gene**
+
+Shiny app address: "https://aliama-bi.shinyapps.io/480139690_app/"
+
+Importance of gene is ordered by **p-value** calculated in previouse Contrast Comparison model. Next, we use interactive app generate by package 'shiny' (Winston 2020) to explore minimum number of important gene needed to classify two groups. User can select number of gene between 50 - 200, and investigate clustering image map (CIM) to see if it successfully distinguish two groups. We find with only top 50 important gene, we can easily tell difference of gene expression value between these two groups. 
+
+A clustering Image Map (CIM) is used to visulise gene clustering observation between TCMR group and Normal group using top 50 important genes. 
+
+```{r CIM,fig.height=6,fig.width=6}
+sig50 <- rownames(fit2$coefficients[order(fit2$F,decreasing=TRUE)[1:50],-1])
+temp = gse[sig50,]
+colnames(temp) = groupname
+heatmap(temp,main = "Clustering Image Map",cex.main=5) 
+sig200 <- rownames(fit2$coefficients[order(fit2$F,decreasing=TRUE)[1:200],-1])
+csv_file_feader = groupname
+csv_file = gse[sig200,]
+colnames(csv_file) = csv_file_feader
+# write.csv(csv_file, "GSE131179_expression_matrix.csv")
+```
+
+## **Generate Machine Learning Classifier**
+
+After knowing significant genes, we next using Machine learning models to build a classifier for predicting kidney transplant rejection based on recipients’ gene characteristics. 
+
+```{r classifer, echo=FALSE, warning=FALSE}
+# X = t(gse[sig50,])
+# y = groupname
+# # data = cbind(t(X),y) %>% as.data.frame()
+# set.seed(2)
+# 
+# cvK = 5  # number of CV folds
+# cv_50acc5_knn = cv_50acc5_svm = cv_50acc5_rf = c()
+# cv_acc_knn = cv_acc_svm = cv_acc_rf = c()
+# n_sim = 50 ## number of repeats
+# 
+# for (i in 1:n_sim) {
+# 
+#   cvSets = cvTools::cvFolds(nrow(X), cvK)  # permute all the data, into 5 folds
+#   cv_acc_knn = cv_acc_svm = cv_acc_rf = c()
+#   
+#   for (j in 1:cvK) {
+#     test_id = cvSets$subsets[cvSets$which == j]
+#     X_test = X[test_id, ]
+#     X_train = X[-test_id, ]
+#     y_test = y[test_id]
+#     y_train = y[-test_id]
+#     
+#     ## KNN
+#     fit5 = class::knn(train = X_train, test = X_test, cl = y_train, k = 5)
+#     cv_acc_knn[j] = table(fit5, y_test) %>% diag %>% sum %>% `/`(length(y_test))
+#     
+#     ## SVM
+#     svm_res <- e1071::svm(x = X_train, y = as.factor(y_train))
+#     fit <- predict(svm_res, X_test)
+#     cv_acc_svm[j] = table(fit, y_test) %>% diag %>% sum %>% `/`(length(y_test))
+# 
+#     ## RandomForest
+#     rf_res <- randomForest::randomForest(x = X_train, y = as.factor(y_train))
+#     fit <- predict(rf_res, X_test)
+#     cv_acc_rf[j] = table(fit, y_test) %>% diag %>% sum %>% `/`(length(y_test))
+#   }
+#   cv_50acc5_knn <- append(cv_50acc5_knn, mean(cv_acc_knn))
+#   cv_50acc5_svm <- append(cv_50acc5_svm, mean(cv_acc_svm))
+#   cv_50acc5_rf <- append(cv_50acc5_rf, mean(cv_acc_rf))
+# } ## end for
+# 
+# KNN = as.data.frame(cv_50acc5_knn)
+# RandomForest = as.data.frame(cv_50acc5_rf)
+# SVM = as.data.frame(cv_50acc5_svm)
+# 
+# cv_acc_model = cbind(KNN,RandomForest,SVM) %>% dplyr::rename(KNN = 'cv_50acc5_knn', Random_Forest = 'cv_50acc5_rf', SVM = 'cv_50acc5_svm')
+# p = gather(cv_acc_model,classifire) %>%
+#   ggplot(aes(x = classifire, y = value, fill = classifire)) +
+#   geom_boxplot(show.legend = FALSE) +
+#   geom_point(show.legend = FALSE) +
+#   labs(x = "Classifire",
+#        y = "Accuracy",
+#        title = "Accuracy Distribution for Different Classifier") +
+#   theme(plot.title = element_text(hjust = 0.5, face = "bold"),
+#         legend.position = "none")
+# p
+# saveRDS(p, file = "/Users/doctor/Documents/GitHub/Data 3888 Discipline Project 2/presentation_files/Model_boxplot.rds")
+readRDS("/Users/doctor/Documents/GitHub/Data 3888 Discipline Project 2/presentation_files/Model_boxplot.rds")
+```
+
+It can be seen from the accuracy boxplots, that the Support Vector Machine was the best out of the three models, with average accuracy up to $\color{skyblue}{\text{0.938}}$, and we use this as our final Classification model. 
+
+
+## **Potential Shortcoming**
+
+- For first potential shortcoming, to keep all samples value has similar distribution, we can consider remove some really abnormal samples. 
+
+- For second potential shortcoming, we can check if there is rRNA or other types of RNA affect their quality.
+
+## **References**
+<div style="text-align: left"> 
+- Vasishta S. Tatapudi and Bonnie E. Lonze (March 31st 2018). Diagnosis, Treatment, and Outcomes of Antibody-Mediated Rejection in Kidney Transplantation, Organ Donation and Transplantation - Current Status and Future Challenges, Georgios Tsoulfas, IntechOpen, DOI: 10.5772/intechopen.75770.
+- Mueller FB, Yang H, Lubetzky M, Verma A et al. Landscape of innate immune system transcriptome and acute T cell-mediated rejection of human kidney allografts. JCI Insight 2019 Jul 11;4(13). PMID: 31292297 
+- Ritchie, M.E., Phipson, B., Wu, D., Hu, Y., Law, C.W., Shi, W., and Smyth, G.K. (2015). limma powers differential expression analyses for RNA-sequencing and microarray studies. Nucleic Acids Research 43(7), e47.
+- Smyth, G. K. 2004. “Linear Models and Empirical Bayes Methods for Assessing Differential Expression in Microarray Experiments.” Stat Appl Genet Mol Biol 3 (1):Article 3.
+- Winston Chang, Joe Cheng, JJ Allaire, Yihui Xie and Jonathan McPherson (2020). shiny: Web Application Framework for R. R package version 1.4.0.2. https://CRAN.R-project.org/package=shiny
+</div>
+
+
+
+
+
+
+
+
+

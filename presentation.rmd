@@ -23,6 +23,8 @@ library(dplyr)
 library(ggbiplot)
 library(factoextra)
 library(tidyverse)
+library(ggrepel)
+#xaringan::inf_mr() for preview slides
 ```
 
 ```{r Dataset import, message = FALSE, echo = FALSE,warning=FALSE}
@@ -34,15 +36,13 @@ rejection_status <- unlist(lapply(strsplit(as.character(rejection_status), ": " 
 
 datadir = "GSE131179_RAW"
 fileNames <- list.files(datadir)
-
-gse = c()
+gse_raw = c()
 for(i in 1:length(fileNames)){
   temptable <- read.delim(file.path(datadir, fileNames[i]), header=TRUE)
-  gse <- cbind(gse, temptable[,2])
-  colnames(gse)[i] <- colnames(temptable)[2]
+  gse_raw <- cbind(gse_raw, temptable[,2])
+  colnames(gse_raw)[i] <- colnames(temptable)[2]
 }
-
-rownames(gse) = read.delim(file.path(datadir, fileNames[1]), header=TRUE)[,1]
+rownames(gse_raw) = read.delim(file.path(datadir, fileNames[1]), header=TRUE)[,1]
 ```
 
 class: inverse, center, middle
@@ -51,10 +51,211 @@ class: inverse, center, middle
 
 ---
 
+background-image: url(https://raw.github.sydney.edu.au/xibi6298/Data-3888-Discipline-Project-2/master/presentation%20slide-figure/DEA%20pipeline.png?token=AAABC2GSFVSMF3RTIH552CC6XOSEE)
+background-size: 400px
+background-position: 50% 75%
 
+# Analyse Pipeline Overview
 
-# The GSE131179 Dataset
+In this study, we want to figure out **How to predict presence of T-cell mediated rejection (TCMR) based on recipients’ gene characteristics?**. Once we identified heightened expression of differential genes between TCMR and normal groups, we can predict the kidney transplant rejection with Random Forest classifer. 
+
 
 ---
+
+class: inverse, center, middle
+
+# Data loading
+
+---
+
+background-image: url(https://raw.github.sydney.edu.au/xibi6298/Data-3888-Discipline-Project-2/master/presentation%20slide-figure/sample%20distribution.png?token=AAABC2HFYL2W7W3PJ2GDIWK6XPB3W)
+background-size: 400px
+background-position: 50% 65%
+
+# Data loading
+
+We obtaied RNA-seq expression values file **GSE131179_RAW** from Gene Expression Omnibus database (NCBI), which is a subset of kidney allograft recipients transplanted and followed at our center.
+
+
+---
+
+class: inverse, center, middle
+
+# Data Pre-processing and Quality Assessment
+
+---
+
+# Data Pre-processing and Quality Assessment
+
+For data exploration and visulisation, a log2 transformed has been applied to RNA sequence.
+
+```{r boxplot, echo=FALSE, message = FALSE, fig.align = "center", fig.width = 10, fig.height = 7, fig.retina = 5}
+gse = log2(gse_raw+1)
+p_box <- ggplot(melt(gse), aes(x=Var2, y=value)) +  
+  geom_boxplot(outlier.colour="black", outlier.shape=16,
+             outlier.size=0.5, notch=FALSE) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs (x = "Recipients", y = "log2(expression value+1)",title = "boxplot of log2 transformed value accross samples") + theme_minimal()
+p_box
+```
+
+---
+
+class: inverse, center, middle
+
+# Differential gene expression analysis
+
+---
+
+# Differential gene expression analysis
+
+**Key Approach: Contrasts comparison with Fitted Linear Model **
+
+We perform pair-wise comparison of each gene between **TCMR** group and **Normal** group. 
+
+1. **Hypotheses:**
+  - $H_0$: There is identical gene expression value between two groups. That is, $$Y_{kg} = \mu + \epsilon_{kg}, g = 1,...,60466, k = 1,2$$
+  - $H_1$: There is at least one differencial gene between two groups. That is, $$Y_{kg} = \mu + \alpha_k + \epsilon_{kg}, g = 1,...,60466, k = 1,2$$
+  
+2. **Test statistic:**
+
+  - We use **moderated t-statistic** to perform significance analysis given by:   $\tilde{t_{gk}}=\frac{\hat{\beta_{gk}}}{u_{gk}\tilde{s_g}}$
+
+3. **Empirical Bayes Method**
+
+  - An empirical Bayes method has been applied to moderate the standard errors of the estimated log-fold changes. $\tilde{s_{g}}^2=\frac{d_0s_0^2}{d_0+d_g}$
+
+---
+
+class: inverse, center, middle
+
+# Differential gene expression analysis
+
+A list of top genes differential expressed
+
+```{r warning=FALSE, echo=FALSE, fig.align = "center"}
+groupname <- c(unlist(rep('ACR',16)),unlist(rep('Normal',18)))
+design <- model.matrix(~ groupname + 0) 
+contrast.matrix <- makeContrasts(groupnameACR-groupnameNormal, levels=design) 
+fit <- lmFit(gse, design)
+fit2 <- contrasts.fit(fit, contrast.matrix)
+fit2 <- eBayes(fit2)  
+tT <- topTable(fit2) 
+gene = tT[,0] %>% as.character() %>% as.matrix()                     
+tT %>% knitr::kable(digits = 3)
+df<- topTable(fit2, number=nrow(fit2), genelist=rownames(gse))
+```
+
+---
+
+# Vocano Plot
+
+```{r echo=FALSE,fig.align = "center", fig.width=9, fig.height=7}
+cut_off_pvalue = 0.005
+cut_off_logFC = 1
+
+dataset = df
+dataset$change = ifelse(dataset$P.Value < cut_off_pvalue & abs(dataset$logFC) >= cut_off_logFC, 
+                     ifelse(dataset$logFC > cut_off_logFC ,'Up','Down'),
+                     'Stable')
+p<-ggplot(
+  dataset, 
+  aes(x = logFC, 
+      y = -log10(P.Value), 
+      colour=change)) +
+      geom_point(alpha=0.4, size=3.5) +
+      scale_color_manual(values=c("#546de5", "#d2dae2","#ff4757"))+
+
+  # abline
+  geom_vline(xintercept=c(-1,1),lty=4,col="black",lwd=0.8) +
+  geom_hline(yintercept = -log10(cut_off_pvalue),lty=4,col="black",lwd=0.8) +
+
+  # axis
+  labs(x="log2(fold change)",
+       y="-log10 (p-value)")+
+  theme_bw()+
+
+  # theme
+  theme(plot.title = element_text(hjust = 0.5), 
+        legend.position="right", 
+        legend.title = element_blank()
+)
+
+dataset$label = ifelse(dataset$P.Value < cut_off_pvalue & abs(dataset$logFC) >= 4.4, dataset$ID,"")
+p <- p+geom_text_repel(data = dataset, aes(x = logFC, 
+                                      y = -log10(P.Value), 
+                                      label = label),
+                  size = 3,box.padding = unit(0.5, "lines"),
+                  point.padding = unit(0.8, "lines"), 
+                  segment.color = "black", 
+                  show.legend = FALSE) + 
+                  labs(title = 'Vocano Plot')
+p
+```
+
+---
+
+# Pitfall for this Experiment
+
+- From MA-plot, red represent upregulated and purple represent downregulated genes. We can see most of the upregulated concentrated in high M value, which means one group has more higher gene expression value compare to another. 
+
+- From MA-plot, red represent upregulated and purple represent downregulated genes. We can see most of the upregulated concentrated in high M value, which means one group has more higher gene expression value compare to another. 
+
+---
+
+# PCA Analysis
+
+```{r PCA, echo=FALSE,fig.align = "center", fig.width=14, fig.height=7, fig.retina = 5}
+gse_pca <- prcomp(t(gse))
+df_toplot <- data.frame(rejection_status, 
+                        pc1 = gse_pca$x[,1], pc2 = gse_pca$x[,2]  )
+
+p1 = ggbiplot::ggscreeplot(gse_pca) + theme_bw(base_size = 16) + 
+    labs(y = "Prop. of explained variance")
+p2 = ggbiplot::ggscreeplot(gse_pca, type = "cev") + theme_bw(base_size = 16) + 
+    labs(y = " Cumulative prop. of explained variance")
+gridExtra::grid.arrange(p1, p2, ncol = 2)
+```
+
+---
+
+# PCA Analysis
+
+```{r, echo=FALSE, fig.align="center", fig.width=9, fig.height=7, fig.retina = 5}
+
+g <- ggplot(df_toplot, aes(x = pc1, y = pc2, color = rejection_status)) + 
+  geom_point() + 
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  labs(title = "2 Priniple PCA Analysis") 
+
+g
+```
+
+---
+
+# Gene Clustering
+
+```{r CIM, echo=FALSE, warning=FALSE,fig.align = "center"}
+### making a CIM
+sig50 <- rownames(fit2$coefficients[order(fit2$F,decreasing=TRUE)[1:50],-1])
+temp = gse[sig50,] 
+colnames(temp) = groupname
+heatmap(temp,main = "Clustering image Map",cex.main=5) 
+```
+
+---
+
+class: inverse, center, middle
+
+# Machine Learning classifier
+
+---
+
+# Machine Learning Classifier
+
+```{r echo=FALSE,fig.align = "center"}
+readRDS("/Users/doctor/Documents/GitHub/Data 3888 Discipline Project 2/presentation_files/Model_boxplot.rds")
+```
 
 

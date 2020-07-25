@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="" xml:lang="">
   <head>
-    <title>Differential Gene Expression Analysis</title>
+    <title>Predicting the presence of T-cell mediated rejection (TCMR) based on recipients’ gene characteristics</title>
     <meta charset="utf-8" />
     <meta name="author" content="SID: 480139690" />
     <link href="libs/remark-css-0.0.1/default.css" rel="stylesheet" />
@@ -12,7 +12,7 @@
     <textarea id="source">
 class: center, middle, inverse, title-slide
 
-# Differential Gene Expression Analysis
+# Predicting the presence of T-cell mediated rejection (TCMR) based on recipients’ gene characteristics
 ## Investigate highly differentially expressed genes between Banff acute T-cell mediated rejection (TCMR) and normal kidney allograft biopsy specimens
 ### SID: 480139690
 
@@ -25,9 +25,129 @@ class: center, middle, inverse, title-slide
 
 class: inverse, center, middle
 
-# The GSE131179 Dataset
+# Outline
 
 ---
+
+background-image: url(https://raw.github.sydney.edu.au/xibi6298/Data-3888-Discipline-Project-2/master/presentation%20slide-figure/outline.png?token=AAABC2BRPEKJ6JEYYVCINE26X7LEO)
+background-size: 400px
+background-position: 50% 75%
+
+# Outline
+
+In this study, we want to figure out **How to predict presence of T-cell mediated rejection (TCMR) based on recipients’ gene characteristics?**. There are 60466 genes recorded for 34 recipients. Once we identified heightened expression of differential genes between TCMR and normal groups, we can predict the kidney transplant rejection with SVM Classifier. 
+
+
+---
+
+class: inverse, center, middle
+
+# Data loading
+
+---
+
+background-image: url(https://raw.github.sydney.edu.au/xibi6298/Data-3888-Discipline-Project-2/master/presentation%20slide-figure/sample%20distribution.png?token=AAABC2HFYL2W7W3PJ2GDIWK6XPB3W)
+background-size: 400px
+background-position: 50% 65%
+
+# Data loading
+
+We accessed RNA-seq expression values file **GSE131179_RAW** from Gene Expression Omnibus database (NCBI), obtained from kidney allograft recipients transplanted and followed at our center. We found data has been normalised using Fragments Per Kilobase of transcript per Million (FPKM).
+
+---
+
+class: inverse, center, middle
+
+# Data Pre-processing and Quality Assessment
+
+---
+
+# Data Pre-processing and Quality Assessment
+
+To minimise variance difference among different samples, we normalised data using `\(log_2\)` transformation, with 1 plus in case original expression value is 0.
+
+&lt;img src="presentation_files/figure-html/boxplot-1.png" width="720" style="display: block; margin: auto;" /&gt;
+
+---
+
+class: inverse, center, middle
+
+# Differential gene expression analysis
+
+---
+
+# Differential gene expression analysis
+
+**Key Approach: Contrasts comparison with Fitted Linear Model **
+
+We perform Contrast comparison of each gene between **TCMR** group and **Normal** group. 
+
+1. **Hypotheses:**
+  - `\(H_0\)`: There is identical gene expression value between two groups. That is, `$$Y_{kg} = \mu + \epsilon_{kg}, g = 1,...,60466, k = 1,2$$`
+  - `\(H_1\)`: There is at least one differencial gene between two groups. That is, `$$Y_{kg} = \mu + \alpha_k + \epsilon_{kg}, g = 1,...,60466, k = 1,2$$`
+  
+2. **Test statistic:**
+
+  - We use **moderated t-statistic** to perform significance analysis given by:   `\(\tilde{t_{gk}}=\frac{\hat{\beta_{gk}}}{u_{gk}\tilde{s_g}}\)`
+
+3. **Empirical Bayes Method**
+
+  - An empirical Bayes method has been applied to moderate the standard errors of the estimated log-fold changes. `\(\tilde{s_{g}}^2=\frac{d_0s_0^2}{d_0+d_g}\)`
+
+---
+
+class: inverse, center, middle
+
+# Differential gene expression analysis
+
+A list of top genes differential expressed
+
+
+```
+##                   logFC AveExpr     t P.Value adj.P.Val      B
+## ENSG00000140749.8 2.303   1.947 9.936       0         0 13.847
+## ENSG00000274712.1 0.482   0.636 9.500       0         0 12.735
+## ENSG00000270231.3 0.639   1.466 8.925       0         0 11.230
+## ENSG00000206337.9 1.618   3.033 8.865       0         0 11.068
+## ENSG00000237499.5 0.641   0.567 8.767       0         0 10.807
+```
+
+---
+
+# Vocano Plot
+
+&lt;img src="presentation_files/figure-html/unnamed-chunk-2-1.png" style="display: block; margin: auto;" /&gt;
+
+---
+
+# Shiny App &amp; Select Minimum Number of Important Genes
+
+&lt;img src="presentation_files/figure-html/CIM-1.png" style="display: block; margin: auto;" /&gt;
+
+---
+
+class: inverse, center, middle
+
+# Machine Learning classifier
+
+---
+
+# Machine Learning Classifier
+
+&lt;img src="presentation_files/figure-html/unnamed-chunk-3-1.png" style="display: block; margin: auto;" /&gt;
+
+
+---
+
+# Potential Shortcomings
+
+-  Abnormally Distributed Sample 
+
+  - Strategy: to keep all samples value has similar distribution, we can consider remove some really abnormal samples. 
+
+- Majority genes are upregulated genes
+
+  - Strategy: we can check if there is rRNA or other types of RNA affect their quality.
     </textarea>
 <style data-target="print-only">@media screen {.remark-slide-container{display:block;}.remark-slide-scaler{box-shadow:none;}}</style>
 <script src="https://remarkjs.com/downloads/remark-latest.min.js"></script>
